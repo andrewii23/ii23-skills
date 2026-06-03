@@ -1,0 +1,11 @@
+{
+  "$schema": "https://www.skills.sh/schema.json",
+  "notGrouped": "bottom",
+  "groupings": [
+    {
+      "title": "Image Generation",
+      "description": "Generate images from text prompts using local, API-key-free, headless backends (GPT via Codex, Gemini via Antigravity).",
+      "skills": ["image-gen-router"]
+    }
+  ]
+}
