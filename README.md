@@ -1,10 +1,10 @@
-# agent-skills
+# ii23-skills
 
 A small collection of [Agent Skills](https://www.skills.sh/) for Claude Code (and any
 skills-compatible agent). Install any skill with one command.
 
 ```bash
-npx skills add andrewii23/agent-skills
+npx skills add andrewii23/ii23-skills
 ```
 
 This lets you pick which skills to install from this repo. The agent picks them up
@@ -60,7 +60,7 @@ You only need the backend(s) you actually plan to use.
 ## Repo layout
 
 ```
-agent-skills/
+ii23-skills/
 ├── skills.sh.json          # skills.sh manifest (groupings)
 ├── skills/
 │   └── image-gen-router/
@@ -77,8 +77,8 @@ agent-skills/
 If you'd rather not use `npx skills`, copy the skill folder into your skills dir:
 
 ```bash
-git clone https://github.com/andrewii23/agent-skills
-cp -R agent-skills/skills/image-gen-router ~/.claude/skills/
+git clone https://github.com/andrewii23/ii23-skills
+cp -R ii23-skills/skills/image-gen-router ~/.claude/skills/
 ```
 
 ## License

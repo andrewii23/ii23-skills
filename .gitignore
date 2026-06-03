@@ -16,3 +16,6 @@ Thumbs.db
 # Local skill dev artifacts
 *-workspace/
 evals/
+
+# Antigravity CLI session junk
+.antigravitycli
