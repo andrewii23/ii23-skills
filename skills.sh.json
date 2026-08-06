@@ -6,6 +6,11 @@
       "title": "Image Generation",
       "description": "Generate images from text prompts using local, API-key-free, headless backends (GPT via Codex, Gemini via Antigravity).",
       "skills": ["image-gen-router"]
+    },
+    {
+      "title": "Video",
+      "description": "Watch and understand any video by grid-packing its frames (many scenes per image, ~7x cheaper than frame-by-frame) alongside a timestamped transcript.",
+      "skills": ["video-understand"]
     }
   ]
 }
