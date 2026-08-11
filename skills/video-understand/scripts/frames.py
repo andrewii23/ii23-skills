@@ -62,6 +62,17 @@ from pathlib import Path
 KEYFRAME_MIN_PER_S = 0.15      # below this, too sparse to cover the clip at all
 KEYFRAME_MIN_DISTINCT = 0.80   # fraction surviving dedup for keyframes to be trusted
 
+# Cap total frames for the WHOLE run, because a fixed fps does not survive long videos:
+# a 67-minute file at 4fps produced 16227 frames -> 12306 kept -> ~193 grids
+# (~359k tokens), versus 7 grids for a 24-minute episode. Coverage per minute is
+# what should shrink on a long video, not the token bill. 512 frames = 8 grids at
+# --cells 64, which is a readable amount and still spans the entire runtime.
+DEFAULT_BUDGET = 512
+
+# How many keyframes to write while deciding which extractor to use. Enough to
+# judge distinctness, small enough that a pathological encode costs ~1s.
+PROBE_LIMIT = 400
+
 # 16x16 grayscale thumbnails, mean absolute per-pixel difference (0-255).
 # Measured idle frames land at 0.1-1.4, real cuts/events at 15-43, so anything
 # at or under this is the same shot continuing.
@@ -141,12 +152,16 @@ def _range_args(start: float | None, end: float | None) -> list[str]:
 
 
 def extract_keyframes(video: str, out: Path, width: int,
-                      start: float | None, end: float | None) -> list[dict]:
+                      start: float | None, end: float | None,
+                      limit: int | None = None) -> list[dict]:
     cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "info", "-skip_frame", "nokey"]
     cmd += _range_args(start, end)
     cmd += ["-i", str(Path(video).resolve()),
-            "-vf", f"scale={width}:-2,showinfo", "-vsync", "vfr",
-            "-q:v", "4", str(out / "f_%05d.jpg")]
+            "-vf", f"scale={width}:-2,showinfo", "-vsync", "vfr"]
+    if limit:
+        # Stops the decode early instead of writing every keyframe first.
+        cmd += ["-frames:v", str(limit)]
+    cmd += ["-q:v", "4", str(out / "f_%05d.jpg")]
     r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
     times = [float(m.group(1)) for m in SHOWINFO_TS.finditer(r.stderr or "")]
     files = sorted(out.glob("f_*.jpg"))
@@ -263,8 +278,14 @@ def main() -> None:
     ap.add_argument("--cells", type=int, default=64,
                     help="Cells per grid. 16 to read on-screen text, 36 for faces "
                          "and fine action, 64 for plot/scene (default).")
-    ap.add_argument("--fps", type=float, default=4.0,
-                    help="Sampling rate for the uniform extractor (default 4).")
+    ap.add_argument("--fps", type=float, default=0.0,
+                    help="Force a sampling rate for the uniform extractor. Default 0 "
+                         "= derive it from --budget so long videos stay affordable.")
+    ap.add_argument("--budget", type=int, default=DEFAULT_BUDGET,
+                    help=f"Max frames to keep for the whole run (default {DEFAULT_BUDGET} "
+                         "= a readable number of grids). Frames are thinned evenly "
+                         "across the full range, never truncated at the tail. "
+                         "0 disables the cap.")
     ap.add_argument("--start")
     ap.add_argument("--end")
     ap.add_argument("--max-grids", type=int, default=0,
@@ -308,24 +329,45 @@ def main() -> None:
             # Actually run the keyframe pass and measure how much of it is
             # distinct -- cheap (~1s even on a 24-min file) and far more
             # reliable than inferring intent from I-frame cadence.
-            probe_frames = extract_keyframes(video, raw, args.cell_width, start, end)
-            per_s = len(probe_frames) / span
+            #
+            # Bounded, because "every frame is a keyframe" is a real encode: a
+            # 67-minute VP9 file reported 121701 keyframes at 30/s, and writing
+            # all of them just to reject the engine costs minutes and gigabytes.
+            # Probing a prefix answers the only question here (are keyframes
+            # distinct enough to trust?) at a fixed cost.
+            probe_frames = extract_keyframes(video, raw, args.cell_width, start, end,
+                                             limit=PROBE_LIMIT)
+            probe_span = span
+            if len(probe_frames) >= PROBE_LIMIT and probe_frames:
+                # Only covered up to the last probed frame, so rate must use that
+                # span, not the whole clip, or a dense encode reads as sparse.
+                probe_span = max(0.001, probe_frames[-1]["t_ms"] / 1000.0 - (start or 0.0))
+            per_s = len(probe_frames) / probe_span
             kept, drop = (probe_frames, 0) if args.no_dedup else dedupe(probe_frames)
             distinct = (len(kept) / len(probe_frames)) if probe_frames else 0.0
+            partial = len(probe_frames) >= PROBE_LIMIT
             if per_s >= KEYFRAME_MIN_PER_S and distinct >= KEYFRAME_MIN_DISTINCT:
                 engine = "keyframe"
-                frames, dropped = kept, drop
+                if not partial:
+                    frames, dropped = kept, drop
             else:
                 engine = "uniform"
-            why = (f"{len(probe_frames)} keyframes over {span:.1f}s ({per_s:.2f}/s), "
-                   f"{distinct:.0%} distinct")
+            why = (f"{len(probe_frames)}{'+' if partial else ''} keyframes over "
+                   f"{probe_span:.1f}s ({per_s:.2f}/s), {distinct:.0%} distinct")
             print(f"[frames] {why} -> {engine}", file=sys.stderr)
-            if engine == "uniform":
+            if engine == "uniform" or partial:
                 shutil.rmtree(raw, ignore_errors=True)
                 raw.mkdir()
 
+        # Derive fps from the budget so a long video thins itself instead of
+        # extracting tens of thousands of frames and discarding most of them.
+        fps = args.fps
+        if engine == "uniform" and fps <= 0:
+            fps = min(4.0, args.budget / span) if args.budget > 0 else 4.0
+            fps = max(fps, 0.05)
+
         if engine == "uniform" and not frames:
-            frames = extract_uniform(video, raw, args.cell_width, args.fps, start, end)
+            frames = extract_uniform(video, raw, args.cell_width, fps, start, end)
             if frames and not args.no_dedup:
                 frames, dropped = dedupe(frames)
         elif engine == "keyframe" and not frames:
@@ -337,6 +379,13 @@ def main() -> None:
             sys.exit(3)
         extracted = len(frames) + dropped
 
+        # Budget applies to BOTH engines: a cut-heavy 3-hour film blows the same
+        # hole through keyframes that a fixed fps blows through uniform sampling.
+        budgeted = 0
+        if args.budget > 0 and len(frames) > args.budget:
+            budgeted = len(frames) - args.budget
+            frames = even_sample(frames, args.budget)
+
         if args.max_grids > 0:
             frames = even_sample(frames, args.max_grids * args.cells)
 
@@ -344,8 +393,10 @@ def main() -> None:
         # Report the resolution each cell actually survives at once Claude
         # downscales the grid -- this, not the cell count, is the real limit.
         eff_w = TOKEN_CAP_LONG_EDGE / cols
-        print(f"[frames] {extracted} extracted, {dropped} near-duplicates dropped, "
-              f"{len(frames)} kept -> {cols}x{rows} grids "
+        thinned = (f", {budgeted} thinned to fit --budget {args.budget}"
+                   if budgeted else "")
+        print(f"[frames] {extracted} extracted, {dropped} near-duplicates dropped"
+              f"{thinned}, {len(frames)} kept -> {cols}x{rows} grids "
               f"(~{eff_w:.0f}px per cell after downscale)", file=sys.stderr)
 
         grids = []
@@ -379,6 +430,9 @@ def main() -> None:
             "grid_rows": rows,   # cols/rows -- always read those per grid
             "frames_extracted": extracted,
             "frames_deduped": dropped,
+            "frames_thinned_for_budget": budgeted,
+            "budget": args.budget,
+            "sampling_fps": round(fps, 3) if engine == "uniform" else None,
             "frames_used": len(frames),
             "range": {"start_s": start, "end_s": end},
             "reading_order": "left-to-right, top-to-bottom",
