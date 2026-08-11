@@ -73,6 +73,15 @@ say so plainly and continue with frames only, rather than inventing dialogue.
 `Read` every `grids[].path` from the manifest, **in one message** (parallel tool
 calls) so you see them together, then read `transcript.json`.
 
+**Read the transcript WHOLE, with `Read`.** Do not sample it — no script that
+prints "the interesting windows", no grepping a few timestamps, no reading the
+first N segments and inferring the rest. Sampling means YOU choose which lines
+matter before knowing what the video is about, and that choice is made from the
+pictures, which is exactly the guess the transcript exists to prevent. If the
+file is large, read it in sequential chunks until you reach the end; a 24-minute
+episode is ~170 segments and costs a few thousand tokens — far cheaper than the
+grids you already read.
+
 Each grid is cells laid left-to-right, top-to-bottom, in `grids[g].cols` ×
 `grids[g].rows` (the last grid may be smaller so it carries no blank cells).
 Cell *i* of grid *g* is `grids[g].cells[i]`, carrying `t_ms` and a human
@@ -91,6 +100,21 @@ Combine both streams: frames say what is shown, the transcript says what is said
 If the user asked something specific, answer it directly. Otherwise summarize
 what happens — structure, key beats, notable visuals, and what is actually said.
 Never paste the raw transcript back; synthesize it.
+
+**The failure mode to watch for.** Pictures let you assemble a story that hangs
+together and is wrong, and it will not feel like guessing — it feels like
+understanding. A real case from this skill's own testing: the grids showed a
+gadget, then a boy turning into a black shadow, a fox appearing, a monkey
+falling. The obvious read — "a gadget with side effects, haunted by shadow
+creatures" — was confident, coherent, and false. One transcript line at 14:00
+explained it: the gadget makes *figures of speech literal*. The shadow was "life
+is gloomy", the fox was an idiom about confusion, the octopus on the ear was
+"ears growing calluses" (bored of hearing it). No amount of visual detail
+contains that link; it is language-only.
+
+So: when the frames suggest a causal story, treat it as a hypothesis and go find
+the line that confirms it. If no line confirms it, say what you saw and that the
+reason is not stated — never ship the plausible version.
 
 Clean up the work dir with `rm -rf` when the user is unlikely to follow up.
 
