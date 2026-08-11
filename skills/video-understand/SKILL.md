@@ -69,9 +69,24 @@ and pass the local file.
 
 ## Step 2 — transcript
 
+**Start this FIRST, in the background, then do Step 1 while it runs.** The
+transcript dominates wall-clock and the two steps share nothing, so running them
+concurrently makes the whole job cost about as much as the transcript alone.
+Launch it with `run_in_background: true`, build the grids, then poll for the
+output file every few seconds.
+
+Measured on a 24-minute 720p episode: grids 5s, transcript ~65s. Run in
+sequence that is ~70s; overlapped it is ~65s, and the grids are free.
+
 ```bash
 python3 "$SKILL_DIR/scripts/transcript.py" "<video>" --out <work-dir>/transcript.json --lang th
 ```
+
+Do not try to speed this up by splitting the audio into chunks and transcribing
+them in parallel — measured, that is 2.2x SLOWER (142s vs 65s), because the API
+rate-limits per key so concurrent uploads queue against each other. Shrinking the
+upload does not help either: a 2.7x smaller Opus file took 3x longer for a
+byte-equivalent transcript. One whole-file call is the fast path.
 
 Prints `TRANSCRIPT: <path>`. Sources tried in order (override with `--source`):
 
