@@ -38,16 +38,31 @@ the real limit is how many pixels each cell survives at after downscaling:
 
 | `--cells` | px per cell | Use for |
 | --- | --- | --- |
-| 16 | ~392 | reading small on-screen text, UI, subtitles |
+| 16 | ~392 | small on-screen text: UI labels, timestamps, subtitles |
 | 36 | ~261 | facial expression, fine action, motion beats |
 | **64** | ~196 | **plot, scene inventory, recaps, spoilers (default)** |
 | 100 | ~157 | rough skim of very long footage; small text is lost |
+
+Text legibility, measured on 720p: big burned-in captions and full-screen title
+cards (including dense Japanese) read fine at **196 px/cell**. Player-UI text —
+`0:01 / 20:56`, a chapter label — needs **392 px/cell**. So reach for `--cells
+16` only for genuinely small text; 64 already handles anything title-sized.
 
 Useful flags: `--start`/`--end` (`SS`, `MM:SS`, `HH:MM:SS`) to focus a section —
 always prefer this over a sparse scan when the user asks about one moment;
 `--max-grids N` to cap cost (frames are thinned evenly across the whole range,
 never truncated at the tail); `--fps` for the uniform extractor; `--force` to
 override extractor choice.
+
+**Do not re-extract single frames to "look closer".** Cropping a full-resolution
+still of a moment you already have in a grid is a wasted step: it costs another
+image Read for content you were handed. Measured on a 720p source — a burned-in
+caption and a full-width title card are both legible at 196 px/cell (`--cells
+64`), so a second look adds nothing. When something genuinely is too small (small
+UI text, a timestamp, a chapter label — unreadable at 196 px, readable at 392),
+re-run `frames.py` with `--cells 16` plus `--start`/`--end` over that moment.
+That gives a whole grid of the region at full cell resolution, which beats one
+cropped frame for the same cost.
 
 For a URL, download it first (`yt-dlp -f 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best' -o video.mp4 "<url>"`)
 and pass the local file.
