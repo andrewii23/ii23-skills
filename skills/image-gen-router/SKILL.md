@@ -1,21 +1,20 @@
 ---
 name: image-gen-router
 description: >-
-  Generate an image from a text prompt, choosing between two local headless
-  backends - GPT (Codex CLI imagegen, runs under your ChatGPT login) or Gemini
-  (Antigravity agy CLI, runs under your Google login). Both are API-key-free and
-  incur no per-image API billing. Use this whenever the user wants to create,
-  generate, draw, make, or render a picture, illustration, icon, thumbnail,
-  logo, poster, artwork, or background from a description - for example
-  "generate an image of a mountain at sunset", "make me a flat-vector server
-  icon", or "draw a cat in watercolor". The defining feature is model choice. If
-  the user names a backend (GPT, OpenAI, codex OR Gemini, Google, agy,
-  antigravity, nano banana), use it directly. If they do NOT name one, ASK which
-  to use before generating. Trigger even when the user does not say GPT, Gemini,
-  or codex - any free-form image-generation request that does not already point
-  at a different tool (Midjourney, Stable Diffusion, DALL-E API, the OpenAI
-  Images API) belongs here. Do NOT use for editing an existing image file,
-  removing backgrounds, or pure HTML/CSS-rendered graphics.
+  Generate an image from a text prompt using one of two local headless backends
+  - GPT (Codex CLI, under your ChatGPT login) or Gemini (Antigravity agy CLI,
+  under your Google login). Both are API-key-free with no per-image billing. Use
+  whenever the user wants to create, generate, draw, make, or render a picture,
+  illustration, icon, thumbnail, logo, poster, artwork, or background from a
+  description - "generate an image of a mountain at sunset", "make me a
+  flat-vector server icon", "draw a cat in watercolor". The defining feature is
+  model choice: if the user names a backend (GPT, OpenAI, codex OR Gemini,
+  Google, agy, antigravity, nano banana), use it directly; if they do NOT name
+  one, ASK which to use before generating. Trigger even when no backend is
+  named - any free-form image-generation request not already pointing at a
+  different tool (Midjourney, Stable Diffusion, DALL-E API, OpenAI Images API)
+  belongs here. Do NOT use for editing an existing image, removing backgrounds,
+  or HTML/CSS-rendered graphics.
 ---
 
 # Image Gen Router

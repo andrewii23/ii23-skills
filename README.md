@@ -1,127 +1,99 @@
 # ii23-skills
 
-A small collection of [Agent Skills](https://www.skills.sh/) for Claude Code (and any
-skills-compatible agent) — image generation and video understanding. Install any
-skill with one command.
+Agent skills for Claude Code (and any skills-compatible agent), built for work
+that keeps hitting the same walls: an agent that cannot watch video, and image
+generation that bills per picture.
 
 ```bash
 npx skills add andrewii23/ii23-skills
 ```
 
-This lets you pick which skills to install from this repo. The agent picks them up
-automatically the next time it runs.
+Pick the skills you want; your agent picks them up next time it runs.
+
+---
+
+## Why these exist
+
+### #1: Your agent cannot watch video
+
+**The problem.** Claude reads still images, not video. Hand it a 24-minute
+episode and there is no "watch this" — there are 43,000 frames. Read them one at
+a time and the bill is brutal: 64 frames at 512px costs about **12,500 tokens**,
+and 64 frames does not cover 24 minutes.
+
+So the obvious workarounds fail in opposite directions. Sample a handful of
+frames and you miss the story. Sample enough frames and you cannot afford it.
+
+**The fix** is to stop sending frames one at a time. `video-understand` packs
+many frames into a single tiled image — a whole 24-minute episode fits in 7
+pictures — and pairs them with a timestamped transcript.
+
+| | Cost |
+| --- | --- |
+| 64 frames, read individually | ~12,500 tokens |
+| The same 64 frames, one grid | **~1,900 tokens** |
+
+That is roughly **7x cheaper**. A 24-minute episode costs about 13k tokens for
+full visual coverage; a 67-minute film costs about 15k.
+
+Published research is more conservative than what current models can actually
+do. [IG-VLM](https://arxiv.org/abs/2403.18406) peaks at 6 frames per grid;
+[Video Panels](https://arxiv.org/html/2509.23724v2) peaks at 2x2 and degrades by
+4x4 — both measured on older, smaller models. Tested here on a 24-minute 720p
+episode, **36 and 64 cells stayed fully legible**, and 100 still carried the
+plot.
+
+→ **[`video-understand`](./skills/video-understand/SKILL.md)** · [docs](./docs/video-understand.md)
+
+### #2: Pictures shouldn't cost money you already pay
+
+**The problem.** Generating an image usually means an API key and a per-image
+charge — on top of the ChatGPT or Google subscription you are already paying
+for.
+
+**The fix** is to drive the tools you are already logged into. `image-gen-router`
+runs GPT through the Codex CLI and Gemini through the Antigravity CLI. No API
+key, no per-image billing — the same as typing the prompt into those tools
+yourself.
+
+Its defining behaviour is the choice: name a backend and it uses it; stay silent
+and it asks which one *before* generating, rather than picking for you.
+
+→ **[`image-gen-router`](./skills/image-gen-router/SKILL.md)** · [docs](./docs/image-gen-router.md)
 
 ---
 
 ## Skills
 
-### 🎨 image-gen-router
-
-Generate an image from a text prompt, choosing between **two local, headless,
-API-key-free backends**:
-
-| Backend | Runs via | Auth |
-| --- | --- | --- |
-| **GPT** | Codex CLI `imagegen` | your ChatGPT login |
-| **Gemini** | Antigravity `agy` CLI | your Google login |
-
-Neither path uses an API key or incurs per-image API billing — it draws on your
-existing ChatGPT / Google account, exactly as if you typed the prompt into that
-tool yourself.
-
-**The defining feature is model choice:**
-
-- If you name a backend in your request (`"use gemini to…"`, `"with gpt, draw…"`),
-  it uses it directly.
-- If you **don't** name one, it asks which to use *before* generating — GPT or
-  Gemini, presented as equals.
-
-**Examples that trigger it:**
-
-> "generate an image of a mountain at sunset"
-> "use gemini to make a flat-vector server icon"
-> "with gpt, draw a watercolor fox curled up asleep, save to ~/Desktop/fox.png"
-
-See [`skills/image-gen-router/`](skills/image-gen-router/) for the full skill.
-
-#### Requirements
-
-Install whichever backend(s) you want to use and make sure you're logged in:
-
-- **GPT backend** — the [`codex` CLI](https://github.com/openai/codex) on your PATH,
-  logged in (`codex login status`), with a default model that supports image
-  generation (e.g. `gpt-5.5`) in `~/.codex/config.toml`.
-- **Gemini backend** — the [Antigravity `agy` CLI](https://antigravity.google/)
-  on your PATH and logged in (`agy --version`).
-
-You only need the backend(s) you actually plan to use.
+| Skill | What it does |
+| --- | --- |
+| **[video-understand](./skills/video-understand/SKILL.md)** | Watch and understand any video — grid-packed frames plus a timestamped transcript. |
+| **[image-gen-router](./skills/image-gen-router/SKILL.md)** | Generate an image via GPT (Codex) or Gemini (Antigravity), API-key-free. |
 
 ---
 
-### 🎬 video-understand
+## Requirements
 
-Watch and actually understand a video — local file or URL. Ask for a summary, a
-spoiler/recap, "what did they say at 3:20", or "find the part where X happens".
+Install only what the skills you took actually need.
 
-**How it works.** Instead of reading frames one at a time, it packs many frames
-into **grid images** (a 24-minute episode fits in ~7 pictures) and pairs them
-with a **timestamped transcript**. The agent reads the pictures and the words
-together, then answers.
+**video-understand**
 
-**Why grids.** Measured: 64 frames read individually ≈ 12.5k tokens; the same 64
-packed into one grid ≈ 1.9k — **about 7x cheaper**, and a 24-minute episode
-costs ~13k tokens for full visual coverage.
+| Need | Why |
+| --- | --- |
+| `ffmpeg` + `ffprobe` | Required — frame extraction and audio. `brew install ffmpeg` |
+| `ELEVENLABS_API_KEY` | Recommended. The most accurate transcripts, especially for Thai. Set it in your shell or a `.env`. |
+| `yt-dlp` | Optional — URLs, and free native captions. |
+| `faster-whisper` | Optional — free offline transcripts. |
 
-> Published work is more conservative than what current models can actually do.
-> [IG-VLM](https://arxiv.org/abs/2403.18406) peaks at 6 frames per grid and
-> [Video Panels](https://arxiv.org/html/2509.23724v2) at 2×2, degrading by 4×4 —
-> both on older, smaller VLMs. Tested here on a 24-minute 720p episode, **36 and
-> 64 cells stayed fully legible** and 100 still carried the plot. Pick cell count
-> by the question, not the clip length:
+Without an ElevenLabs key it falls back to native subtitles (via `yt-dlp`, URLs
+only) or offline `faster-whisper`, so the skill still works.
 
-| `--cells` | px per cell | Use for |
-| --- | --- | --- |
-| 16 | ~392 | reading small on-screen text, UI, subtitles |
-| 36 | ~261 | facial expression, fine action, motion beats |
-| **64** | ~196 | **plot, recaps, spoilers (default)** |
-| 100 | ~157 | rough skim; small text is lost |
+**image-gen-router** — install whichever backend you plan to use, and be logged in:
 
-**Two extractors, picked automatically.** Cut-heavy footage (film, anime) is
-covered by keyframes — 404 of them pulled from a 24-minute episode in ~1.2s.
-Low-cut footage (screen recordings, talking heads) has keyframes that follow the
-encoder rather than the content, so it falls back to uniform sampling. The choice
-is made by probing how many frames are actually *distinct*, not by counting them:
-on the test clips that was 100% vs 71%, and picking by raw density chose exactly
-backwards.
-
-**Deduplication does the heavy lifting.** Measured on a screen recording, **88%
-of frames at 12fps** and 54% at 4fps were near-identical to the one before, while
-real events scored a 10–40x higher delta. Raising the frame rate mostly buys
-duplicates; dropping them is what buys coverage.
-
-**Both halves are required.** Grids show what is on screen and never what was
-said — on the test episode the pictures gave the arc, but what was stolen, the
-gadget's name, and how it resolved lived entirely in the audio.
-
-**Honest limits:** continuous motion (easing, velocity, bounce) is *not*
-readable — grids give positions, not the curve between them. Discrete, staged
-motion (text animating in, items appearing one by one) reads fine.
-
-**Examples that trigger it:**
-
-> "summarize this video" · "สปอยคลิปนี้ให้หน่อย" · "what happens in ~/Movies/ep12.mp4"
-> "what did they say around 3:20?" · "find the part where the logo appears"
-
-See [`skills/video-understand/`](skills/video-understand/) for the full skill.
-
-#### Requirements
-
-- **`ffmpeg` + `ffprobe`** on your PATH (`brew install ffmpeg`) — required.
-- **`ELEVENLABS_API_KEY`** — recommended, and the most accurate option for Thai.
-  Set it in your shell or a `.env` file. Without it the skill falls back to
-  native subtitles (via `yt-dlp`, URLs only) or offline `faster-whisper`.
-- **`yt-dlp`** — optional, for URLs and free native captions.
-- **`faster-whisper`** — optional, for free offline transcripts.
+| Backend | Needs |
+| --- | --- |
+| GPT | [`codex` CLI](https://github.com/openai/codex) on PATH, logged in, with an imagegen-capable default model in `~/.codex/config.toml` |
+| Gemini | [Antigravity `agy` CLI](https://antigravity.google/) on PATH and logged in |
 
 Python 3.9+, standard library only.
 
@@ -131,33 +103,31 @@ Python 3.9+, standard library only.
 
 ```
 ii23-skills/
-├── skills.sh.json          # skills.sh manifest (groupings)
-├── skills/
-│   ├── image-gen-router/
-│   │   ├── SKILL.md         # the skill definition
-│   │   └── scripts/
-│   │       ├── gen_gpt.py     # GPT (codex) backend
-│   │       └── gen_gemini.py  # Gemini (agy) backend
-│   └── video-understand/
-│       ├── SKILL.md         # the skill definition
-│       └── scripts/
-│           ├── frames.py      # extract → dedup → grid-pack + manifest
-│           └── transcript.py  # ElevenLabs / captions / whisper
-├── README.md
-└── LICENSE
+├── skills/                  # the skills themselves
+│   ├── video-understand/
+│   │   ├── SKILL.md         # the agent contract
+│   │   └── scripts/         # frames.py, transcript.py
+│   └── image-gen-router/
+│       ├── SKILL.md
+│       └── scripts/         # gen_gpt.py, gen_gemini.py
+├── docs/                    # human-facing page per skill
+├── .agents/adr/             # why a decision was made
+├── .out-of-scope/           # what was deliberately not built, and why
+├── CLAUDE.md                # rules for agents editing this repo
+└── skills.sh.json           # skills.sh manifest
 ```
 
 ## Manual install
 
-If you'd rather not use `npx skills`, copy the skill folder into your skills dir:
+If you would rather not use `npx skills`:
 
 ```bash
 git clone https://github.com/andrewii23/ii23-skills
-cp -R ii23-skills/skills/image-gen-router ~/.claude/skills/
 cp -R ii23-skills/skills/video-understand ~/.claude/skills/
+cp -R ii23-skills/skills/image-gen-router ~/.claude/skills/
 ```
 
-Restart your agent (or start a new session) so it picks up the new skill.
+Restart your agent (or start a new session) so it picks up the new skills.
 
 ## License
 
