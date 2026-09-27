@@ -21,9 +21,14 @@ the model alongside the images -- the grid carries order and content, the
 manifest carries real timestamps. Never ask a model to guess a timestamp off a
 grid cell.
 
+A third mode, `--at`, skips both: it grabs one frame at each named moment. Use
+it after reading the transcript, when the speaker points at something ("look
+here", "notice this") -- the grid's sampling may have landed either side of it.
+
 Usage:
   python3 frames.py VIDEO --out-dir DIR [--cells 64] [--fps 4]
                           [--start T] [--end T] [--max-grids N] [--no-dedup]
+  python3 frames.py VIDEO --out-dir DIR --at 4:32,7:10 [--cells 16]
 
 Output:
   DIR/grid_000.png ...        the tiled images
@@ -185,6 +190,30 @@ def extract_uniform(video: str, out: Path, width: int, fps: float,
             for i, p in enumerate(files)]
 
 
+def extract_at(video: str, out: Path, width: int, times: list[float]) -> list[dict]:
+    """One frame at each requested moment -- cues the transcript pointed at.
+
+    Input-side seek per cue, so a cue near the end of a long file costs the same
+    as one near the start. Cues are never deduped: the caller asked for exactly
+    these moments, and two cues on a static shot are still two answers.
+    """
+    frames: list[dict] = []
+    for i, t in enumerate(times):
+        dest = out / f"f_{i:05d}.jpg"
+        subprocess.run(
+            ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+             "-ss", f"{t:.3f}", "-i", str(Path(video).resolve()),
+             "-frames:v", "1", "-vf", f"scale={width}:-2", "-q:v", "4", str(dest)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+        )
+        if dest.exists():
+            frames.append({"path": str(dest), "t_ms": int(round(t * 1000))})
+        else:
+            print(f"[frames] no frame at {fmt_ts(int(t * 1000))} (past the end?)",
+                  file=sys.stderr)
+    return frames
+
+
 def thumbs(paths: list[Path]) -> list[bytes]:
     """Decode every frame to a tiny gray thumbnail in ONE ffmpeg pass.
 
@@ -295,6 +324,10 @@ def main() -> None:
     ap.add_argument("--no-dedup", action="store_true")
     ap.add_argument("--force", choices=["keyframe", "uniform"],
                     help="Override the auto-selected extractor.")
+    ap.add_argument("--at",
+                    help="Comma-separated moments (SS, MM:SS or HH:MM:SS) to grab "
+                         "exactly one frame each -- e.g. the times the transcript "
+                         "says 'look at this'. Replaces the extractor; no dedup.")
     args = ap.parse_args()
 
     need("ffmpeg")
@@ -324,6 +357,12 @@ def main() -> None:
         engine = args.force
         frames: list[dict] = []
         dropped = 0
+
+        if args.at:
+            cues = sorted(parse_time(t) for t in args.at.split(",") if t.strip())
+            engine = "cues"
+            frames = extract_at(video, raw, args.cell_width, cues)
+            print(f"[frames] {len(frames)}/{len(cues)} cue frames", file=sys.stderr)
 
         if engine is None:
             # Actually run the keyframe pass and measure how much of it is
