@@ -200,13 +200,31 @@ def via_captions(url: str, lang: str | None) -> dict:
              "--no-warnings", url],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
         )
-        files = sorted(tmp.glob("*.srt"))
+        files = pick_caption(sorted(tmp.glob("*.srt")), langs.split(","))
         if not files:
             raise RuntimeError(f"no captions available: {(r.stderr or '')[-200:]}")
-        return {"language": lang, "words": [],
+        got = files[0].name.split(".")[-2] if files[0].name.count(".") >= 2 else lang
+        return {"language": got, "words": [],
                 "segments": parse_srt(files[0].read_text(encoding="utf-8", errors="replace"))}
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+def pick_caption(files: list[Path], langs: list[str]) -> list[Path]:
+    """Order caption files by the requested language priority.
+
+    yt-dlp writes one `s.<lang>.srt` per track, and a plain sort puts `en`
+    before `th` -- so a Thai video that also carries English subs used to be
+    transcribed from the English track even though `th` was asked for first.
+    """
+    def rank(p: Path) -> int:
+        tag = p.name.split(".")[-2] if p.name.count(".") >= 2 else ""
+        for i, want in enumerate(langs):
+            want = want.strip()
+            if tag == want or tag.startswith(want + "-"):
+                return i
+        return len(langs)
+    return sorted(files, key=rank)
 
 
 def parse_srt(text: str) -> list[dict]:
