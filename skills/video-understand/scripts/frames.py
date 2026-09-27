@@ -47,12 +47,17 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import index as shot_index  # noqa: E402
 
 # Keyframe DENSITY does not tell you whether keyframes are useful: a 120fps
 # screen recording emits ~1.0 I-frames/s (encoder cadence) while a 24-min anime
@@ -73,6 +78,10 @@ KEYFRAME_MIN_DISTINCT = 0.80   # fraction surviving dedup for keyframes to be tr
 # what should shrink on a long video, not the token bill. 512 frames = 8 grids at
 # --cells 64, which is a readable amount and still spans the entire runtime.
 DEFAULT_BUDGET = 512
+
+# Ceiling for the shot-driven budget: past this, frames thin evenly again.
+# 2048 frames = 32 grids at --cells 64.
+SHOT_BUDGET_CAP = 2048
 
 # How many keyframes to write while deciding which extractor to use. Enough to
 # judge distinctness, small enough that a pathological encode costs ~1s.
@@ -197,21 +206,28 @@ def extract_at(video: str, out: Path, width: int, times: list[float]) -> list[di
     as one near the start. Cues are never deduped: the caller asked for exactly
     these moments, and two cues on a static shot are still two answers.
     """
-    frames: list[dict] = []
-    for i, t in enumerate(times):
+    src = str(Path(video).resolve())
+
+    def grab(item: tuple[int, float]) -> dict | None:
+        i, t = item
         dest = out / f"f_{i:05d}.jpg"
         subprocess.run(
             ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
-             "-ss", f"{t:.3f}", "-i", str(Path(video).resolve()),
+             "-ss", f"{t:.3f}", "-i", src,
              "-frames:v", "1", "-vf", f"scale={width}:-2", "-q:v", "4", str(dest)],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
         )
         if dest.exists():
-            frames.append({"path": str(dest), "t_ms": int(round(t * 1000))})
-        else:
-            print(f"[frames] no frame at {fmt_ts(int(t * 1000))} (past the end?)",
-                  file=sys.stderr)
-    return frames
+            return {"path": str(dest), "t_ms": int(round(t * 1000))}
+        print(f"[frames] no frame at {fmt_ts(int(t * 1000))} (past the end?)",
+              file=sys.stderr)
+        return None
+
+    # Each seek is its own short ffmpeg; running several at once is what makes
+    # a thousand-shot film take seconds instead of minutes.
+    with ThreadPoolExecutor(max_workers=min(8, (os.cpu_count() or 4))) as pool:
+        got = list(pool.map(grab, enumerate(times)))
+    return [f for f in got if f]
 
 
 def thumbs(paths: list[Path]) -> list[bytes]:
@@ -244,6 +260,8 @@ def thumbs(paths: list[Path]) -> list[bytes]:
 
 
 def dedupe(frames: list[dict], threshold: float = DEDUP_THRESHOLD) -> tuple[list[dict], int]:
+    """Drop frames near-identical to the last kept one. Frames marked `anchor`
+    (one per shot) are never dropped: they are the coverage guarantee."""
     if len(frames) <= 1:
         return frames, 0
     th = thumbs([Path(f["path"]) for f in frames])
@@ -254,12 +272,37 @@ def dedupe(frames: list[dict], threshold: float = DEDUP_THRESHOLD) -> tuple[list
     dropped = 0
     for f, t in zip(frames[1:], th[1:]):
         delta = sum(abs(a - b) for a, b in zip(t, last)) / len(t)
-        if delta <= threshold:
+        if delta <= threshold and not f.get("anchor"):
             dropped += 1
         else:
             kept.append(f)
             last = t
     return kept, dropped
+
+
+def shot_times(shots: list[dict], budget: int, start: float, end: float,
+               fill_fps_cap: float = 4.0) -> list[dict]:
+    """One anchor per shot (its sharpest sampled moment), then spend what is left
+    of the budget evenly across the range so long takes -- a walkthrough, a pan,
+    a talking head -- get more than one frame."""
+    anchors = [{"t": s["sharpest_s"], "anchor": True, "shot": s["index"]} for s in shots]
+    if len(anchors) > budget:
+        anchors = even_sample([{**a, "t_ms": 0} for a in anchors], budget)
+    span = end - start
+    left = budget - len(anchors)
+    fill: list[dict] = []
+    if left > 0 and span > 0:
+        rate = min(fill_fps_cap, left / span)
+        n = int(span * rate)
+        taken = sorted(a["t"] for a in anchors)
+        import bisect
+        for k in range(n):
+            t = start + (k + 0.5) / rate
+            i = bisect.bisect_left(taken, t)
+            near = min([abs(taken[j] - t) for j in (i - 1, i) if 0 <= j < len(taken)] or [9])
+            if near >= 0.3:
+                fill.append({"t": t, "anchor": False})
+    return sorted(anchors + fill, key=lambda x: x["t"])
 
 
 def even_sample(items: list[dict], n: int) -> list[dict]:
@@ -271,33 +314,109 @@ def even_sample(items: list[dict], n: int) -> list[dict]:
     return [items[round(i * (len(items) - 1) / (n - 1))] for i in range(n)]
 
 
-def grid_shape(cells: int) -> tuple[int, int]:
-    """Near-square, never taller than wide (matches reading order)."""
-    cols = int(cells ** 0.5)
-    if cols * cols < cells:
-        cols += 1
+def grid_shape(cells: int, aspect: float = 16 / 9) -> tuple[int, int]:
+    """Columns x rows that make the whole GRID near-square.
+
+    `aspect` is one cell's width/height. Landscape cells keep the old near-square
+    count layout; portrait cells (phone video) get more columns, so a 9:16 grid
+    is not a tall strip that the long-edge downscale crushes.
+    """
+    if aspect >= 1:
+        cols = int(cells ** 0.5)
+        if cols * cols < cells:
+            cols += 1
+    else:
+        cols = min(cells, max(1, round((cells / aspect) ** 0.5)))
     rows = (cells + cols - 1) // cols
     return cols, rows
 
 
-def build_grid(frames: list[dict], cols: int, rows: int, cell_w: int,
-               out_png: Path, tmp: Path) -> bool:
+# 5x7 bitmap glyphs for timestamp labels. ffmpeg's drawtext needs a freetype
+# build that many installs (Homebrew's included) do not have, and the label is
+# only ever digits, ':' and '.'.
+GLYPHS = {
+    "0": ["01110", "10001", "10011", "10101", "11001", "10001", "01110"],
+    "1": ["00100", "01100", "00100", "00100", "00100", "00100", "01110"],
+    "2": ["01110", "10001", "00001", "00010", "00100", "01000", "11111"],
+    "3": ["11110", "00001", "00001", "01110", "00001", "00001", "11110"],
+    "4": ["00010", "00110", "01010", "10010", "11111", "00010", "00010"],
+    "5": ["11111", "10000", "11110", "00001", "00001", "10001", "01110"],
+    "6": ["00110", "01000", "10000", "11110", "10001", "10001", "01110"],
+    "7": ["11111", "00001", "00010", "00100", "01000", "01000", "01000"],
+    "8": ["01110", "10001", "10001", "01110", "10001", "10001", "01110"],
+    "9": ["01110", "10001", "10001", "01111", "00001", "00010", "01100"],
+    ":": ["00000", "00100", "00100", "00000", "00100", "00100", "00000"],
+    ".": ["00000", "00000", "00000", "00000", "00000", "00110", "00110"],
+    " ": ["00000"] * 7,
+}
+
+
+def write_label(text: str, scale: int, dest: Path) -> None:
+    """White-on-black timestamp as a binary PGM -- stdlib only."""
+    pad = scale
+    glyph_w = 6 * scale
+    w = len(text) * glyph_w + 2 * pad
+    h = 7 * scale + 2 * pad
+    rows = [bytearray(w) for _ in range(h)]
+    for ci, ch in enumerate(text):
+        g = GLYPHS.get(ch, GLYPHS[" "])
+        for gy, line in enumerate(g):
+            for gx, bit in enumerate(line):
+                if bit == "1":
+                    for dy in range(scale):
+                        y = pad + gy * scale + dy
+                        x0 = pad + ci * glyph_w + gx * scale
+                        rows[y][x0:x0 + scale] = b"\xff" * scale
+    dest.write_bytes(f"P5 {w} {h} 255\n".encode() + b"".join(bytes(r) for r in rows))
+
+
+def build_grid(frames: list[dict], cols: int, rows: int, cell_w: int, cell_h: int,
+               out_png: Path, tmp: Path, labels: bool = True) -> bool:
     stage = tmp / f"stage_{out_png.stem}"
     shutil.rmtree(stage, ignore_errors=True)
     stage.mkdir(parents=True)
+    # Fit the label to the narrower side: a 9:16 cell is tall but thin, and a
+    # label sized off its height runs past the edge.
+    longest = max((len(f.get("label") or fmt_ts(f["t_ms"])) for f in frames), default=7)
+    scale = max(1, min(cell_h // 60, int(cell_w * 0.55) // (6 * longest)))
     for i, f in enumerate(frames):
         shutil.copy(f["path"], stage / f"g_{i:03d}.jpg")
-    cell_h = int(round(cell_w * 9 / 16 / 2)) * 2
-    r = subprocess.run(
-        ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
-         "-i", str(stage / "g_%03d.jpg"),
-         "-vf", f"scale={cell_w}:{cell_h},"
-                f"tile={cols}x{rows}:margin=6:padding=4:color=white",
-         "-frames:v", "1", str(out_png)],
-        capture_output=True, text=True, encoding="utf-8", errors="replace",
-    )
+        if labels:
+            # Every label in one grid must be the same size: ffmpeg re-inits the
+            # overlay when a frame's dimensions change, and the tile restarts --
+            # a grid mixing "9" and "10", or "59:59.9" and "1:00:00.0", lost
+            # its first half that way.
+            write_label((f.get("label") or fmt_ts(f["t_ms"])).ljust(longest), scale,
+                        stage / f"l_{i:03d}.pgm")
+    tile = f"tile={cols}x{rows}:margin=6:padding=4:color=white"
+    if labels:
+        cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+               "-i", str(stage / "g_%03d.jpg"), "-i", str(stage / "l_%03d.pgm"),
+               "-filter_complex",
+               f"[0:v]scale={cell_w}:{cell_h},setsar=1[c];[c][1:v]overlay=0:0,{tile}",
+               "-frames:v", "1", str(out_png)]
+    else:
+        cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+               "-i", str(stage / "g_%03d.jpg"),
+               "-vf", f"scale={cell_w}:{cell_h},setsar=1,{tile}",
+               "-frames:v", "1", str(out_png)]
+    r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
     shutil.rmtree(stage, ignore_errors=True)
     return r.returncode == 0 and out_png.exists()
+
+
+def frame_aspect(path: str) -> float:
+    """Width/height of an extracted frame -- after ffmpeg applied any rotation
+    metadata, so a phone clip stored landscape-with-rotate reads as portrait."""
+    r = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+         "stream=width,height", "-of", "csv=p=0", path],
+        capture_output=True, text=True, encoding="utf-8", errors="replace")
+    try:
+        w, h = (int(x) for x in r.stdout.strip().split(",")[:2])
+        return w / h if h else 16 / 9
+    except ValueError:
+        return 16 / 9
 
 
 def main() -> None:
@@ -310,11 +429,11 @@ def main() -> None:
     ap.add_argument("--fps", type=float, default=0.0,
                     help="Force a sampling rate for the uniform extractor. Default 0 "
                          "= derive it from --budget so long videos stay affordable.")
-    ap.add_argument("--budget", type=int, default=DEFAULT_BUDGET,
-                    help=f"Max frames to keep for the whole run (default {DEFAULT_BUDGET} "
-                         "= a readable number of grids). Frames are thinned evenly "
-                         "across the full range, never truncated at the tail. "
-                         "0 disables the cap.")
+    ap.add_argument("--budget", type=int, default=None,
+                    help=f"Max frames for the whole run. Default: {DEFAULT_BUDGET}, "
+                         f"raised to one frame per shot (up to {SHOT_BUDGET_CAP}) so "
+                         "no shot goes unseen. Frames are thinned evenly across the "
+                         "full range, never truncated at the tail. 0 disables the cap.")
     ap.add_argument("--start")
     ap.add_argument("--end")
     ap.add_argument("--max-grids", type=int, default=0,
@@ -322,8 +441,13 @@ def main() -> None:
                          "across the whole range, never truncated at the tail.")
     ap.add_argument("--cell-width", type=int, default=480)
     ap.add_argument("--no-dedup", action="store_true")
-    ap.add_argument("--force", choices=["keyframe", "uniform"],
-                    help="Override the auto-selected extractor.")
+    ap.add_argument("--no-labels", action="store_true",
+                    help="Do not burn each cell's timestamp into its corner.")
+    ap.add_argument("--force", choices=["shots", "keyframe", "uniform"],
+                    help="Override the extractor. Default is shots.")
+    ap.add_argument("--index",
+                    help="index.json from index.py -- reuses its shot list instead "
+                         "of decoding the video again.")
     ap.add_argument("--at",
                     help="Comma-separated moments (SS, MM:SS or HH:MM:SS) to grab "
                          "exactly one frame each -- e.g. the times the transcript "
@@ -345,16 +469,20 @@ def main() -> None:
     meta = probe(video)
     start = parse_time(args.start)
     end = parse_time(args.end)
-    span = (end if end is not None else meta["duration_s"]) - (start or 0.0)
+    lo = start or 0.0
+    hi = end if end is not None else meta["duration_s"]
+    span = hi - lo
     if span <= 0:
         sys.exit("empty time range")
 
     tmp = Path(tempfile.mkdtemp(prefix="vu_frames_"))
     raw = tmp / "raw"
     raw.mkdir()
+    budget = DEFAULT_BUDGET if args.budget is None else args.budget
+    shots_seen = 0
 
     try:
-        engine = args.force
+        engine = args.force or "shots"
         frames: list[dict] = []
         dropped = 0
 
@@ -364,95 +492,98 @@ def main() -> None:
             frames = extract_at(video, raw, args.cell_width, cues)
             print(f"[frames] {len(frames)}/{len(cues)} cue frames", file=sys.stderr)
 
-        if engine is None:
-            # Actually run the keyframe pass and measure how much of it is
-            # distinct -- cheap (~1s even on a 24-min file) and far more
-            # reliable than inferring intent from I-frame cadence.
-            #
-            # Bounded, because "every frame is a keyframe" is a real encode: a
-            # 67-minute VP9 file reported 121701 keyframes at 30/s, and writing
-            # all of them just to reject the engine costs minutes and gigabytes.
-            # Probing a prefix answers the only question here (are keyframes
-            # distinct enough to trust?) at a fixed cost.
-            probe_frames = extract_keyframes(video, raw, args.cell_width, start, end,
-                                             limit=PROBE_LIMIT)
-            probe_span = span
-            if len(probe_frames) >= PROBE_LIMIT and probe_frames:
-                # Only covered up to the last probed frame, so rate must use that
-                # span, not the whole clip, or a dense encode reads as sparse.
-                probe_span = max(0.001, probe_frames[-1]["t_ms"] / 1000.0 - (start or 0.0))
-            per_s = len(probe_frames) / probe_span
-            kept, drop = (probe_frames, 0) if args.no_dedup else dedupe(probe_frames)
-            distinct = (len(kept) / len(probe_frames)) if probe_frames else 0.0
-            partial = len(probe_frames) >= PROBE_LIMIT
-            if per_s >= KEYFRAME_MIN_PER_S and distinct >= KEYFRAME_MIN_DISTINCT:
-                engine = "keyframe"
-                if not partial:
-                    frames, dropped = kept, drop
+        elif engine == "shots":
+            if args.index:
+                idx = json.loads(Path(args.index).expanduser().read_text(encoding="utf-8"))
+                shots = [s for s in idx["shots"] if s["end_s"] > lo and s["start_s"] < hi]
             else:
-                engine = "uniform"
-            why = (f"{len(probe_frames)}{'+' if partial else ''} keyframes over "
-                   f"{probe_span:.1f}s ({per_s:.2f}/s), {distinct:.0%} distinct")
-            print(f"[frames] {why} -> {engine}", file=sys.stderr)
-            if engine == "uniform" or partial:
-                shutil.rmtree(raw, ignore_errors=True)
-                raw.mkdir()
-
-        # Derive fps from the budget so a long video thins itself instead of
-        # extracting tens of thousands of frames and discarding most of them.
-        fps = args.fps
-        if engine == "uniform" and fps <= 0:
-            fps = min(4.0, args.budget / span) if args.budget > 0 else 4.0
-            fps = max(fps, 0.05)
-
-        if engine == "uniform" and not frames:
-            frames = extract_uniform(video, raw, args.cell_width, fps, start, end)
+                itmp = tmp / "idx"
+                itmp.mkdir()
+                scene, stats, _, _ = shot_index.run_passes(
+                    str(Path(video).resolve()), start, end, False, itmp)
+                shots = shot_index.build_shots(shot_index.detect_cuts(scene), span, stats, [])
+                for s in shots:
+                    for k in ("start_s", "end_s", "sharpest_s"):
+                        s[k] = round(s[k] + lo, 3)
+            shots_seen = len(shots)
+            # One frame per shot is the floor, so the default budget rises to
+            # meet the shot count -- a film with 1700 shots gets 1700 frames,
+            # not 512 that silently skip two shots in three.
+            if args.budget is None:
+                budget = min(max(DEFAULT_BUDGET, len(shots)), SHOT_BUDGET_CAP)
+            # Fill density falls with length: a 30s clip can afford 4 frames a
+            # second of fine action, a 5-minute walkthrough does not need them --
+            # shots and the index already mark where things change.
+            cap = 4.0 if span <= 60 else (2.0 if span <= 300 else 1.0)
+            plan = shot_times(shots, budget if budget > 0 else max(len(shots), 1) * 4,
+                              lo, hi, fill_fps_cap=cap)
+            got = extract_at(video, raw, args.cell_width, [p["t"] for p in plan])
+            by_t = {int(round(p["t"] * 1000)): p for p in plan}
+            for f in got:
+                p = by_t.get(f["t_ms"], {})
+                f["anchor"] = p.get("anchor", False)
+                if "shot" in p:
+                    f["shot"] = p["shot"]
+            frames = got
             if frames and not args.no_dedup:
                 frames, dropped = dedupe(frames)
-        elif engine == "keyframe" and not frames:
-            frames = extract_keyframes(video, raw, args.cell_width, start, end)
+            print(f"[frames] {len(shots)} shots -> "
+                  f"{sum(1 for f in frames if f.get('anchor'))} shot anchors + "
+                  f"{sum(1 for f in frames if not f.get('anchor'))} fill frames",
+                  file=sys.stderr)
+
+        if engine in ("keyframe", "uniform"):
+            fps = args.fps
+            if engine == "uniform" and fps <= 0:
+                fps = min(4.0, budget / span) if budget > 0 else 4.0
+                fps = max(fps, 0.05)
+            if engine == "uniform":
+                frames = extract_uniform(video, raw, args.cell_width, fps, start, end)
+            else:
+                frames = extract_keyframes(video, raw, args.cell_width, start, end)
             if frames and not args.no_dedup:
                 frames, dropped = dedupe(frames)
+        else:
+            fps = 0.0
 
         if not frames:
             sys.exit(3)
         extracted = len(frames) + dropped
 
-        # Budget applies to BOTH engines: a cut-heavy 3-hour film blows the same
-        # hole through keyframes that a fixed fps blows through uniform sampling.
         budgeted = 0
-        if args.budget > 0 and len(frames) > args.budget:
-            budgeted = len(frames) - args.budget
-            frames = even_sample(frames, args.budget)
+        if budget > 0 and len(frames) > budget:
+            budgeted = len(frames) - budget
+            frames = even_sample(frames, budget)
 
         if args.max_grids > 0:
             frames = even_sample(frames, args.max_grids * args.cells)
 
-        cols, rows = grid_shape(args.cells)
-        # Report the resolution each cell actually survives at once Claude
-        # downscales the grid -- this, not the cell count, is the real limit.
-        eff_w = TOKEN_CAP_LONG_EDGE / cols
-        thinned = (f", {budgeted} thinned to fit --budget {args.budget}"
-                   if budgeted else "")
+        aspect = frame_aspect(frames[0]["path"])
+        cell_w = args.cell_width if aspect >= 1 else int(round(args.cell_width * aspect / 2)) * 2
+        cell_h = int(round(cell_w / aspect / 2)) * 2
+        cols, rows = grid_shape(args.cells, cell_w / cell_h)
+        long_edge = max(cols * cell_w, rows * cell_h)
+        eff = min(cell_w, cell_w * TOKEN_CAP_LONG_EDGE / long_edge)
+        thinned = (f", {budgeted} thinned to fit --budget {budget}" if budgeted else "")
         print(f"[frames] {extracted} extracted, {dropped} near-duplicates dropped"
               f"{thinned}, {len(frames)} kept -> {cols}x{rows} grids "
-              f"(~{eff_w:.0f}px per cell after downscale)", file=sys.stderr)
+              f"(~{eff:.0f}px wide per cell after downscale)", file=sys.stderr)
 
         grids = []
         for gi in range(0, len(frames), args.cells):
             chunk = frames[gi:gi + args.cells]
             png = out_dir / f"grid_{gi // args.cells:03d}.png"
-            # A partly-filled grid (the last one, usually) is tiled to its own
-            # shape so it carries no blank cells -- empty space costs tokens and
-            # reads as missing content.
-            c, r = (cols, rows) if len(chunk) == args.cells else grid_shape(len(chunk))
-            if not build_grid(chunk, c, r, args.cell_width, png, tmp):
+            c, r = ((cols, rows) if len(chunk) == args.cells
+                    else grid_shape(len(chunk), cell_w / cell_h))
+            if not build_grid(chunk, c, r, cell_w, cell_h, png, tmp,
+                              labels=not args.no_labels):
                 continue
             grids.append({
                 "path": str(png),
                 "cols": c,
                 "rows": r,
-                "cells": [{"index": i, "t_ms": f["t_ms"], "t_label": fmt_ts(f["t_ms"])}
+                "cells": [{"index": i, "t_ms": f["t_ms"], "t_label": fmt_ts(f["t_ms"]),
+                           **({"shot": f["shot"]} if "shot" in f else {})}
                           for i, f in enumerate(chunk)],
             })
 
@@ -464,13 +595,15 @@ def main() -> None:
             "duration_s": round(meta["duration_s"], 2),
             "has_audio": meta["has_audio"],
             "engine": engine,
+            "shots": shots_seen or None,
             "cells_per_grid": args.cells,
             "grid_cols": cols,   # nominal shape; a short final grid has its own
             "grid_rows": rows,   # cols/rows -- always read those per grid
+            "labels": not args.no_labels,
             "frames_extracted": extracted,
             "frames_deduped": dropped,
             "frames_thinned_for_budget": budgeted,
-            "budget": args.budget,
+            "budget": budget,
             "sampling_fps": round(fps, 3) if engine == "uniform" else None,
             "frames_used": len(frames),
             "range": {"start_s": start, "end_s": end},

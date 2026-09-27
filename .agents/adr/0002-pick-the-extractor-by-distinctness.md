@@ -1,5 +1,8 @@
 # Pick the frame extractor by measuring distinctness, not keyframe density
 
+**Superseded by [0006](./0006-one-frame-per-shot.md)** as the default extractor. The keyframe and uniform
+extractors remain available with `--force`, and this reasoning still governs them.
+
 Two extractors cover different footage. `-skip_frame nokey` decodes I-frames
 only, which encoders emit at scene cuts, so on cut-heavy material those frames
 *are* the distinct moments — 404 of them out of a 24-minute episode in about
