@@ -4,9 +4,13 @@
 about it: a summary, a recap, a spoiler, "what did they say at 3:20", "find the
 part where X happens".
 
-It never sends frames one at a time. Frames are packed into tiled **grid**
-images, so a 24-minute episode arrives as 7 pictures instead of hundreds, and
-every grid is paired with a timestamped transcript. Both halves are mandatory:
+It sees every **shot**. One cheap pass finds each cut in the video, and every
+shot gets at least one frame, so a two-hour film cannot hide a scene between
+samples. Frames are packed into timestamp-labelled **grid** images instead of
+being sent one at a time, and alongside them come a timestamped transcript and
+a text **index** of the video: where the cuts are, what moves, where the sound
+spikes or goes quiet, what words appear on screen. The grid and the transcript
+are both mandatory whenever there is speech:
 a grid shows what is on screen and never what was said, and a summary built from
 pictures alone is confident, coherent, and wrong often enough that the skill
 treats skipping the transcript as a defect rather than a shortcut.
@@ -20,6 +24,9 @@ question attached.
 | Your situation | Where to go |
 | --- | --- |
 | "What happens in this video?" / summarize / recap / spoil | This skill |
+| A full-length film: spoiler, recap, pick the scenes worth cutting | This skill — every shot is covered |
+| A video with no speech: a sight gag, a room tour, b-roll | This skill — `index.py --ocr` carries the words |
+| Fifty downloaded clips, which are usable? | This skill — `cull.py` |
 | "What did they say around 12:00?" | This skill — use `--start`/`--end` to focus |
 | "Find the moment the logo appears" | This skill |
 | Reading small on-screen text, a UI label, a timestamp | This skill, at `--cells 16` |
@@ -40,6 +47,41 @@ the most accurate transcripts, especially for Thai. Without it the skill falls
 back to native subtitles via `yt-dlp` (URLs only) or a local `faster-whisper`
 install.
 
+## Shots, not frames
+
+Earlier versions sampled a fixed 512 frames per video. On a 2h05m film that put
+a frame in 29% of its 1,727 shots, and skipped shots up to 28 seconds long. A
+shot you never see is a scene you cannot pick or spoil, so frames now start
+from the shot list: one frame per shot (its sharpest moment), plus extra frames
+through long takes. The same film now shows every shot, in 27 grids.
+
+Finding the shots is its own problem. The usual ffmpeg recipe (`scene > 0.3`)
+found **0 of 32** cuts in two 30-second stretches of that film checked frame by
+frame by hand — shot/reverse-shot in one room never scores that high. An
+adaptive rule, a score that spikes well above its neighbours, found 30 of 32
+with no false cuts.
+
+| | Old default | Now |
+| --- | --- | --- |
+| Shots on a 2h05m film with a frame | 494 / 1,727 | 1,727 / 1,727 |
+| Grids | 8 | 27 |
+| Cells | unlabelled | stamped with their time |
+
+## The index: what frames cannot show
+
+`index.py` writes one line per shot plus the sound and the on-screen text. It
+is what a silent video has instead of a transcript:
+
+| Line | Tells you |
+| --- | --- |
+| `#12 03:21.5-03:25.0 (3.5s) \| high motion, dark, loud` | an action beat, at night, with noise |
+| `sound hit 00:41.3` | a slam, a laugh, a music sting — in silent comedy, the punchline |
+| a silence after a line | a beat meant to land |
+| `00:09.0-00:11.0 找小三` (with `--ocr`) | burned-in captions: the words of a muted clip |
+
+Measured: the 2h05m film indexed in 69s; a 2:45 phone room tour with `--ocr`
+in 7s, every caption pulled out as timed text.
+
 ## Grids, and how many cells
 
 The cell count is a **resolution** decision, not a cost one. Images are
@@ -58,9 +100,10 @@ Measured on 720p source: burned-in captions and full-screen title cards —
 including dense Japanese — are legible at 196px. Player-UI text like a
 `0:01 / 20:56` counter needs 392px.
 
-Grids carry order and content, not the clock. Cells are not evenly spaced,
-because near-duplicate frames are dropped. Timestamps come from the emitted
-`manifest.json`, never from reading the picture.
+Every cell is stamped with its time in the corner. Cells are not evenly spaced
+— one per shot plus fill — so the stamp, not the cell's position, is the time.
+Portrait phone video gets a grid with more columns so the image stays
+near-square instead of a tall strip.
 
 ## Screening for burned-in text
 
@@ -85,6 +128,16 @@ small subtitles as clean; this one reports 100 characters on it.
 
 Six samples are six moments. A subtitle that flashes for a second between them
 can slip through, so treat `clean` as "worth a look", not a guarantee.
+
+## Culling footage
+
+`cull.py` ranks a batch of clips by sharpness, steadiness, exposure, burned-in
+text and length, and returns one contact sheet — each clip's sharpest frame,
+labelled with its rank — so the whole batch is judged from one image. Scores
+are relative to the batch, because blur and motion numbers do not transfer
+between cameras. Near-black and murky frames are left out of the sharpness
+measure: on the first test batch they made two dark night clips look like the
+sharpest footage. 20 clips ranked in 48s.
 
 ## What it cannot do
 
@@ -122,11 +175,12 @@ when run concurrently — which is what the skill tells the agent to do. The
 transcript is mostly fixed overhead, so it scales far better than duration
 suggests: 24 minutes takes 65s, 67 minutes takes 80s.
 
-**Why did it only give me 8 grids for a whole film?**
-A frame budget caps the run (default 512 frames). Without it, 67 minutes at a
-fixed sampling rate produced 193 grids — about 359k tokens for one video.
-Frames are thinned evenly across the whole runtime, not truncated, so coverage
-still spans the film end to end. Raise it with `--budget` if you want more.
+**Why 27 grids for one film?**
+Because it has 1,727 shots and each gets a frame. The budget rises to the shot
+count (capped at 2,048 frames). If the question is about one scene, that is
+more than you need: cap it with `--budget 512` and zoom into the scene with
+`--start`/`--end`. For a recap, spoiler or scene selection, seeing every shot
+is the point.
 
 **Do I have to crop a frame to read on-screen text?**
 No, and you should not. Re-run with `--cells 16` plus `--start`/`--end` over
@@ -135,9 +189,11 @@ resolution for the same cost as one cropped still.
 
 ## It's working if
 
-- The run prints which extractor it chose and the distinct-% behind that choice.
-- A 24-minute video produces roughly 7 grids; a feature-length one produces
-  about 8 and still spans the full runtime.
+- `frames.py` prints how many shots it found and that every one got an anchor
+  frame.
+- Every grid cell shows a timestamp in its corner.
+- `index.md` has one line per shot, and with `--ocr` the video's captions as
+  timed text.
 - Every timestamp in the answer can be traced to a cell in `manifest.json`.
 - The summary states facts that appear nowhere in the pictures — names, rules,
   reasons — which means the transcript was actually read.

@@ -9,7 +9,7 @@
     },
     {
       "title": "Video",
-      "description": "Watch and understand any video by grid-packing its frames (many scenes per image, ~7x cheaper than frame-by-frame) alongside a timestamped transcript.",
+      "description": "Watch and understand any video, from a clip to a full film: every shot indexed and seen once in timestamped grids (~7x cheaper than frame-by-frame), plus a transcript. Also culls footage.",
       "skills": ["video-understand"]
     }
   ]

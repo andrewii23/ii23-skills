@@ -34,7 +34,9 @@ pictures — and pairs them with a timestamped transcript.
 | The same 64 frames, one grid | **~1,900 tokens** |
 
 That is roughly **7x cheaper**. A 24-minute episode costs about 13k tokens for
-full visual coverage; a 67-minute film costs about 15k.
+full visual coverage. A 2h05m film with 1,727 shots is 27 grids, about 51k
+tokens, with every shot seen once — cap it with `--budget` when a question
+only needs one scene.
 
 Published research is more conservative than what current models can actually
 do. [IG-VLM](https://arxiv.org/abs/2403.18406) peaks at 6 frames per grid;
@@ -67,7 +69,7 @@ and it asks which one *before* generating, rather than picking for you.
 
 | Skill | What it does |
 | --- | --- |
-| **[video-understand](./skills/video-understand/SKILL.md)** | Watch and understand any video — grid-packed frames plus a timestamped transcript. Also screens piles of clips for burned-in text. |
+| **[video-understand](./skills/video-understand/SKILL.md)** | Watch and understand any video, from a clip to a full film, with or without speech — every shot indexed and seen once, in timestamped grids, plus a transcript. Also culls piles of clips and screens them for burned-in text. |
 | **[image-gen-router](./skills/image-gen-router/SKILL.md)** | Generate an image via GPT (Codex) or Gemini (Antigravity), API-key-free. |
 
 ---
@@ -84,7 +86,7 @@ Install only what the skills you took actually need.
 | `ELEVENLABS_API_KEY` | Recommended. The most accurate transcripts, especially for Thai. Set it in your shell or a `.env`. |
 | `yt-dlp` | Optional — URLs, and free native captions. |
 | `faster-whisper` | Optional — free offline transcripts. |
-| `swiftc` (macOS) or `tesseract` | Optional — only for `text_check.py`, the burned-in text screen. |
+| `swiftc` (macOS) or `tesseract` | Optional — on-screen text: `index.py --ocr`, `text_check.py`, `cull.py --text`. |
 
 Without an ElevenLabs key it falls back to native subtitles (via `yt-dlp`, URLs
 only) or offline `faster-whisper`, so the skill still works.
