@@ -29,3 +29,10 @@ it reads Chinese, Japanese, Korean and Thai with no packs to install. Python
 cannot call it from the standard library, so a small Swift helper is compiled on
 first use and cached in `~/.cache/video-understand/`. `tesseract` is the portable
 fallback.
+
+Vision needs full language codes (`th-TH`, `ja-JP`, `ko-KR`) and silently
+ignores ones it does not know. The first helper passed `th`, `ja` and `ko`, so
+it only ever read Chinese and English: on a Thai film with burned-in subtitles
+it returned no Thai at all. Languages are now a flag (`--lang` /
+`--ocr-lang`, short codes mapped to Vision's), default `zh,en`. Re-running the
+54-clip measurement with the new default reproduced every number above.

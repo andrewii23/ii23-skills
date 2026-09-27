@@ -10,7 +10,11 @@ for path in CommandLine.arguments.dropFirst() {
        let cg = img.cgImage(forProposedRect: nil, context: nil, hints: nil) {
         let req = VNRecognizeTextRequest()
         req.recognitionLevel = .accurate
-        req.recognitionLanguages = ["zh-Hans", "zh-Hant", "ja", "ko", "th", "en-US"]
+        // Vision wants full codes (th-TH, not th). Unknown codes are dropped
+        // silently, which is how Thai subtitles once came back as nothing.
+        let langs = ProcessInfo.processInfo.environment["OCR_LANGS"]?
+            .split(separator: ",").map(String.init) ?? ["zh-Hans", "en-US"]
+        req.recognitionLanguages = langs
         req.usesLanguageCorrection = false
         req.minimumTextHeight = 0.015
         try? VNImageRequestHandler(cgImage: cg).perform([req])

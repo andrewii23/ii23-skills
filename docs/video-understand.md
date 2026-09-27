@@ -78,9 +78,17 @@ is what a silent video has instead of a transcript:
 | `sound hit 00:41.3` | a slam, a laugh, a music sting — in silent comedy, the punchline |
 | a silence after a line | a beat meant to land |
 | `00:09.0-00:11.0 找小三` (with `--ocr`) | burned-in captions: the words of a muted clip |
+| `--ocr-lang th` | which script to read — Thai subtitles need it named |
 
 Measured: the 2h05m film indexed in 69s; a 2:45 phone room tour with `--ocr`
-in 7s, every caption pulled out as timed text.
+in 7s, every caption pulled out as timed text. On a film with burned-in
+subtitles, `--ocr --ocr-lang th` pulled 1,278 Thai subtitle lines across the
+whole 2h05m in 356s — the dialogue, with no paid transcription.
+
+Tested end to end on 60 RedNote clips — 20 room tours, 20 silent comedy
+sketches, 20 b-roll clips, 2h51m in total, portrait and landscape, 720p–1080p:
+all 60 indexed (with `--ocr`) and gridded with no failure. Indexing took 574s
+and grids 819s for the batch, on Apple Silicon.
 
 ## Grids, and how many cells
 

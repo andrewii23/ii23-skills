@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import platform
 import shutil
 import subprocess
@@ -87,8 +88,25 @@ def vision_binary() -> Path | None:
     return binary
 
 
-def ocr_vision(binary: Path, images: list[Path]) -> dict[str, dict]:
-    r = subprocess.run([str(binary), *map(str, images)],
+# Short codes people type -> the codes Vision accepts.
+VISION_LANGS = {"th": "th-TH", "en": "en-US", "zh": "zh-Hans", "zh-tw": "zh-Hant",
+                "ja": "ja-JP", "ko": "ko-KR", "vi": "vi-VT", "id": "id-ID",
+                "ms": "ms-MY", "ar": "ar-SA", "ru": "ru-RU", "hi": "hi-IN"}
+TESS_LANGS = {"th": "tha", "en": "eng", "zh": "chi_sim", "zh-tw": "chi_tra",
+              "ja": "jpn", "ko": "kor", "vi": "vie", "id": "ind"}
+
+
+def vision_langs(langs: str) -> str:
+    return ",".join(VISION_LANGS.get(x.strip().lower(), x.strip()) for x in langs.split(","))
+
+
+def tess_langs(langs: str) -> str:
+    return "+".join(TESS_LANGS.get(x.strip().lower(), x.strip()) for x in langs.split(","))
+
+
+def ocr_vision(binary: Path, images: list[Path], langs: str = "zh,en") -> dict[str, dict]:
+    env = {**os.environ, "OCR_LANGS": vision_langs(langs)}
+    r = subprocess.run([str(binary), *map(str, images)], env=env,
                        capture_output=True, text=True, encoding="utf-8", errors="replace")
     out: dict[str, dict] = {}
     for line in r.stdout.splitlines():
@@ -138,7 +156,10 @@ def main() -> None:
                     help="A video is 'clean' at or under this many characters "
                          f"across all samples (default {MAX_CHARS}).")
     ap.add_argument("--backend", choices=["auto", "vision", "tesseract"], default="auto")
-    ap.add_argument("--tesseract-langs", default="eng+chi_sim+tha")
+    ap.add_argument("--lang", default="zh,en",
+                    help="Languages to read, comma-separated: th, en, zh, ja, ko ... "
+                         "(default zh,en). Name the language of the text you expect -- "
+                         "Vision reads only the scripts it is told to.")
     ap.add_argument("--out", default="text_check.json")
     args = ap.parse_args()
 
@@ -170,8 +191,8 @@ def main() -> None:
             work.mkdir()
             frames = sample_frames(video, dur, args.samples, work) if dur > 0 else []
             paths = [p for _, p in frames]
-            rows = (ocr_vision(binary, paths) if backend == "vision"
-                    else ocr_tesseract(paths, args.tesseract_langs)) if paths else {}
+            rows = (ocr_vision(binary, paths, args.lang) if backend == "vision"
+                    else ocr_tesseract(paths, tess_langs(args.lang))) if paths else {}
             per = [{"t_ms": t, "chars": rows.get(str(p), {}).get("chars", 0),
                     "text": rows.get(str(p), {}).get("text", "")} for t, p in frames]
             total = sum(f["chars"] for f in per)

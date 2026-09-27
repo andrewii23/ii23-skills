@@ -265,7 +265,7 @@ def audio_events(loud: list[dict], min_jump: float = 12.0) -> list[dict]:
 
 
 def ocr_track(video: str, start: float | None, end: float | None, span: float,
-              tmp: Path) -> tuple[str | None, list[dict]]:
+              tmp: Path, langs: str = "zh,en") -> tuple[str | None, list[dict]]:
     """On-screen text over time: burned-in captions, signs, title cards.
 
     For a muted clip or one whose words are typed on screen instead of spoken,
@@ -293,8 +293,8 @@ def ocr_track(video: str, start: float | None, end: float | None, span: float,
     batches = [files[i:i + 40] for i in range(0, len(files), 40)]
 
     def run(batch: list[Path]) -> dict:
-        return (text_check.ocr_vision(binary, batch) if backend == "vision"
-                else text_check.ocr_tesseract(batch, "eng+chi_sim+tha"))
+        return (text_check.ocr_vision(binary, batch, langs) if backend == "vision"
+                else text_check.ocr_tesseract(batch, text_check.tess_langs(langs)))
     rows: dict = {}
     with ThreadPoolExecutor(max_workers=4) as pool:
         for part in pool.map(run, batches):
@@ -340,6 +340,9 @@ def main() -> None:
     ap.add_argument("--ocr", action="store_true",
                     help="Also read on-screen text over time (captions, signs). The "
                          "transcript of a muted or captioned-only video.")
+    ap.add_argument("--ocr-lang", default="zh,en",
+                    help="Languages of the on-screen text: th, en, zh, ja, ko ... "
+                         "(default zh,en). Thai subtitles need --ocr-lang th.")
     args = ap.parse_args()
     need("ffmpeg")
     need("ffprobe")
@@ -361,7 +364,7 @@ def main() -> None:
     try:
         scene, stats, loud, silences = run_passes(video, start, end, meta["has_audio"], tmp)
         if args.ocr:
-            ocr_backend, onscreen = ocr_track(video, start, end, span, tmp)
+            ocr_backend, onscreen = ocr_track(video, start, end, span, tmp, args.ocr_lang)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

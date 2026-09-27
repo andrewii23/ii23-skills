@@ -40,6 +40,7 @@ and pass the local file.
 | Job | Run |
 | --- | --- |
 | Short clip (under ~5 min): what happens, explain it | transcript (background) + `index.py --ocr` + `frames.py --index` |
+| Film with burned-in subtitles | `index.py --ocr --ocr-lang <lang>` IS the transcript; skip the paid one |
 | Silent / no-speech: sight gags, room tours, b-roll | `index.py --ocr` + `frames.py --index`; transcript only if there is speech |
 | Long video / film: recap, spoiler, pick scenes | transcript (background) + `index.py` + `frames.py --index`, read every grid; then zoom |
 | One moment ("what happens at 1:02:10") | `frames.py --start --end --cells 16` over that window |
@@ -69,8 +70,16 @@ What the index gives that frames cannot:
 - **Words on screen** (`--ocr`). Burned-in captions ARE the transcript of a
   muted clip; signs and title cards name places and chapters.
 
-Measured cost: a 2h05m 720p film indexed in 69s (1,727 shots). A 2:45 phone
-clip with `--ocr` took 7s. `--ocr` needs macOS + `swiftc` or `tesseract`.
+**Name the language of the on-screen text** with `--ocr-lang` (default
+`zh,en`): `th` for Thai subtitles, `ja`, `ko`, ... OCR reads only the scripts
+it is told to — on a Thai film with burned-in subtitles the default returned
+zero Thai lines; `--ocr-lang th` returned the dialogue verbatim. A film with
+burned-in subtitles in a language you can read needs no paid transcript at
+all: the OCR track is the dialogue.
+
+Measured cost: a 2h05m 720p film indexed in 69s (1,727 shots); with
+`--ocr --ocr-lang th` it took 356s and returned 1,278 Thai subtitle lines
+spanning 0:06 to 2:04:45. A 2:45 phone clip with `--ocr` took 7s. `--ocr` needs macOS + `swiftc` or `tesseract`.
 
 ## Step 2 — frames
 
