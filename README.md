@@ -67,7 +67,7 @@ and it asks which one *before* generating, rather than picking for you.
 
 | Skill | What it does |
 | --- | --- |
-| **[video-understand](./skills/video-understand/SKILL.md)** | Watch and understand any video — grid-packed frames plus a timestamped transcript. |
+| **[video-understand](./skills/video-understand/SKILL.md)** | Watch and understand any video — grid-packed frames plus a timestamped transcript. Also screens piles of clips for burned-in text. |
 | **[image-gen-router](./skills/image-gen-router/SKILL.md)** | Generate an image via GPT (Codex) or Gemini (Antigravity), API-key-free. |
 
 ---
@@ -84,6 +84,7 @@ Install only what the skills you took actually need.
 | `ELEVENLABS_API_KEY` | Recommended. The most accurate transcripts, especially for Thai. Set it in your shell or a `.env`. |
 | `yt-dlp` | Optional — URLs, and free native captions. |
 | `faster-whisper` | Optional — free offline transcripts. |
+| `swiftc` (macOS) or `tesseract` | Optional — only for `text_check.py`, the burned-in text screen. |
 
 Without an ElevenLabs key it falls back to native subtitles (via `yt-dlp`, URLs
 only) or offline `faster-whisper`, so the skill still works.

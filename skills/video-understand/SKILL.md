@@ -1,6 +1,6 @@
 ---
 name: video-understand
-description: Watch and fully understand any video — local file or URL — by packing its frames into grid images (many scenes per image, ~7x cheaper than reading frames one by one) and pairing them with a timestamped transcript. Use this whenever the user wants a video watched, summarized, explained, spoiled, recapped, searched, or asked questions about — "what happens in this video", "summarize this clip", "สปอยคลิปนี้", "ดูวิดีโอนี้ให้หน่อย", "recap this episode", "what did they say at 3:20", "find the part where X happens", "อธิบายคลิปนี้" — or when they paste a video path/URL and ask anything about its contents. Also use for reviewing footage, checking what is on screen, or locating a moment. Do NOT use for editing, cutting, rendering, or generating video.
+description: Watch and fully understand any video — local file or URL — by packing its frames into grid images (many scenes per image, ~7x cheaper than reading frames one by one) and pairing them with a timestamped transcript. Use this whenever the user wants a video watched, summarized, explained, spoiled, recapped, searched, or asked questions about — "what happens in this video", "summarize this clip", "สปอยคลิปนี้", "ดูวิดีโอนี้ให้หน่อย", "recap this episode", "what did they say at 3:20", "find the part where X happens", "อธิบายคลิปนี้" — or when they paste a video path/URL and ask anything about its contents. Also use for reviewing footage, checking what is on screen, locating a moment, or screening many clips for burned-in text/subtitles ("which clips have no subtitles", "คลิปไหนไม่มีตัวหนังสือ"). Do NOT use for editing, cutting, rendering, or generating video.
 ---
 
 # Video Understand
@@ -63,6 +63,16 @@ UI text, a timestamp, a chapter label — unreadable at 196 px, readable at 392)
 re-run `frames.py` with `--cells 16` plus `--start`/`--end` over that moment.
 That gives a whole grid of the region at full cell resolution, which beats one
 cropped frame for the same cost.
+
+**Cue frames.** After reading the transcript, if the speaker points at something
+("look here", "notice this", "ตรงนี้") and the grid's sampling missed that
+moment, grab exactly those instants instead of re-scanning a range:
+
+```bash
+python3 "$SKILL_DIR/scripts/frames.py" "<video>" --out-dir <work-dir>/cues --at 4:32,7:10 --cells 16
+```
+
+One frame per cue, no dedup, same manifest format (`engine: "cues"`).
 
 For a URL, download it first (`yt-dlp -f 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best' -o video.mp4 "<url>"`)
 and pass the local file.
@@ -148,6 +158,24 @@ reason is not stated — never ship the plausible version.
 
 Clean up the work dir with `rm -rf` when the user is unlikely to follow up.
 
+## Screening footage for burned-in text
+
+When the job is picking reusable footage out of many downloads — b-roll,
+reference clips, "the ones without subtitles" — do NOT build grids for every
+file. Screen them first:
+
+```bash
+python3 "$SKILL_DIR/scripts/text_check.py" <video> [<video> ...] --out <work-dir>/text_check.json
+```
+
+It OCRs 6 full-resolution frames per video (macOS Vision, or `tesseract` on
+other systems) and marks each `clean` or `TEXT`. Measured on 54 RedNote clips:
+~2s per clip, noise on clean footage ≤4 chars, the smallest real overlay 18
+chars, so the default `--max-chars 8` sits in that gap. It only checks 6
+moments: a subtitle that shows for one second between samples can slip
+through, so run `frames.py` on the `clean` survivors and look before
+promising "no text anywhere". Exit 2 means no OCR backend — say so.
+
 ## What this cannot do
 
 Say so plainly rather than guessing:
@@ -171,6 +199,7 @@ tokens for full visual coverage.
 
 ## Requirements
 
-`ffmpeg` + `ffprobe` on PATH. Python 3.9+, stdlib only. Optional: `yt-dlp`
+`ffmpeg` + `ffprobe` on PATH. Python 3.9+, stdlib only. `text_check.py` also
+needs macOS with `swiftc` (Xcode command-line tools) or `tesseract`. Optional: `yt-dlp`
 (URLs, native captions), `faster-whisper` (offline transcripts),
 `ELEVENLABS_API_KEY` (best transcripts, especially Thai).

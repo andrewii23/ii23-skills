@@ -23,12 +23,17 @@ question attached.
 | "What did they say around 12:00?" | This skill — use `--start`/`--end` to focus |
 | "Find the moment the logo appears" | This skill |
 | Reading small on-screen text, a UI label, a timestamp | This skill, at `--cells 16` |
+| The speaker says "look here" at 4:32 and the grid missed it | This skill — `frames.py --at 4:32` |
+| Sorting a pile of downloads into "has subtitles" vs "clean footage" | This skill — `text_check.py` |
 | Cutting, trimming, or rendering the video | Not this skill — it only reads |
 | Generating video | Not this skill |
 
 ## Prerequisites
 
 `ffmpeg` and `ffprobe` on your PATH (`brew install ffmpeg`) — required.
+
+The text screen (`text_check.py`) needs macOS with Xcode command-line tools
+(`swiftc`), or `tesseract` on any OS.
 
 An `ELEVENLABS_API_KEY` is strongly recommended and not required. It produces
 the most accurate transcripts, especially for Thai. Without it the skill falls
@@ -56,6 +61,30 @@ including dense Japanese — are legible at 196px. Player-UI text like a
 Grids carry order and content, not the clock. Cells are not evenly spaced,
 because near-duplicate frames are dropped. Timestamps come from the emitted
 `manifest.json`, never from reading the picture.
+
+## Screening for burned-in text
+
+Picking reusable footage is a different question from understanding one video:
+across fifty downloads you only need to know which ones someone already typed
+over. `text_check.py` answers that without building a single grid. It OCRs six
+full-resolution frames per clip and marks each `clean` or `TEXT`.
+
+Measured on 54 RedNote clips (8s to 10min, 720p–1080p), macOS Vision backend:
+
+| | Result |
+| --- | --- |
+| Speed | 106s for all 54, about 2s per clip |
+| OCR noise on clean footage | at most 4 characters (a stray dash, a sign in the background) |
+| Smallest real overlay | 18 characters (a phone screenshot's status bar) |
+| Burned-in subtitles | 30 to 1,122 characters |
+| Default `--max-chars` | 8, the gap between noise and real text |
+
+Frames are checked at full resolution on purpose. An earlier version that
+downscaled to 720px wide and dropped low-confidence reads marked a clip with
+small subtitles as clean; this one reports 100 characters on it.
+
+Six samples are six moments. A subtitle that flashes for a second between them
+can slip through, so treat `clean` as "worth a look", not a guarantee.
 
 ## What it cannot do
 
@@ -113,6 +142,8 @@ resolution for the same cost as one cropped still.
 - The summary states facts that appear nowhere in the pictures — names, rules,
   reasons — which means the transcript was actually read.
 - Where something is genuinely unclear, the answer says so instead of guessing.
+- `text_check.py` ends with a line like `vision: 7/54 clean`, and the clips it
+  calls clean show no subtitles when you open them.
 
 ## Where it fits
 
