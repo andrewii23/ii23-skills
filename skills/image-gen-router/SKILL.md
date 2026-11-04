@@ -19,13 +19,17 @@ description: >-
 
 # Image Gen Router
 
-Generate a raster image from a text prompt using one of two **local, headless,
-API-key-free** backends. Both run under an existing logged-in account (no API
-key, no per-image API billing) exactly as if the user typed the prompt into that
-tool themselves:
+Claude cannot generate a raster image, but the user's ChatGPT and Google accounts can. This skill
+generates a raster image by driving one of two **official CLIs, headless**, under
+the account the user is already signed into: no API key, no per-image API bill,
+exactly as if the user typed the prompt into that tool themselves.
 
-- **GPT** — Codex CLI's `imagegen` tool, under the user's ChatGPT login.
-- **Gemini** — Antigravity `agy` CLI headless, under the user's Google login.
+- **GPT** — the OpenAI **Codex CLI** (`codex exec` with its built-in `$imagegen`
+  skill, model `gpt-image-2`), under the user's ChatGPT login. It counts toward
+  the Codex plan's usage limits.
+- **Gemini** — the Google **Antigravity CLI** (`agy -p`, headless mode, its
+  built-in image tool), under the user's Google login. It uses the plan's
+  Antigravity quota.
 
 The whole point of this skill is letting the user pick the model. Everything
 else (subject, style, aspect, palette, mood) flows straight from the prompt into
@@ -104,11 +108,22 @@ Shared options:
   palette, composition, aspect ratio. Both models honor detail. Example:
   `"isometric 3D illustration of a coffee shop, warm pastel palette, soft shadows, 16:9"`.
 - **`--prompt-file <path>`** — for long prompts, avoids shell-quoting pain.
-- **`--out <path>`** — destination PNG. Omit to let the backend keep its own
-  file and just report the path.
-- **`--timeout <sec>`** — default 600. Image gen usually finishes in under a
-  minute, but image models can be slow on a cold start, so don't lower this
-  without reason.
+- **`--out <path>`** — destination image (`.png` or `.jpg`). Omit to let the
+  backend keep its own file and just report the path.
+- **`--timeout <sec>`** — default 600. Measured 2026-11-04 (codex 0.166, agy
+  1.5.0, one square sticker): GPT 27–35 s, Gemini 50–60 s. Cold starts are
+  slower, so don't lower this without reason.
+
+What each script actually runs (both close stdin, or the CLI waits for more
+prompt text until the timeout):
+
+| Backend | Command | Where the image lands, and how the script finds it |
+| --- | --- | --- |
+| GPT | `codex exec --skip-git-repo-check --ephemeral --json --sandbox read-only -c model_reasoning_effort=low "$imagegen …"` | `$CODEX_HOME/generated_images/<thread_id>/`, thread id from the `--json` events; the script copies it (Codex itself is never asked to write) |
+| Gemini | `agy -p "…" --output-format json --print-timeout <t>`, run inside `~/.cache/agy-imagegen/workspace` | `~/.gemini/antigravity-cli/brain/<conversation_id>/` (JPEG), id from the JSON envelope; the script copies it, converting with macOS `sips` when `--out` asks for PNG |
+
+Neither run needs a permission bypass: image generation needs no approval, and
+no agent is asked to write a file.
 
 After it runs, parse the `IMAGE:` line and tell the user the absolute path. When
 helpful, Read the image to confirm it matches the request before reporting
@@ -146,12 +161,15 @@ python3 ~/.claude/skills/image-gen-router/scripts/gen_gpt.py \
 
 Both scripts exit non-zero and explain themselves on stderr:
 
-- **exit 2** — the backend's CLI is missing or not authenticated. For GPT, that's
-  `codex login status`; for Gemini, check `agy --version` and that the user is
-  logged into Antigravity. Tell the user exactly which login to fix.
-- **exit 3** — the CLI ran but produced no image, or timed out. Usually a
-  transient backend hiccup or a model that lacks image gen. Re-run once; if it
-  persists, report the stderr the script printed.
+- **exit 2** — the backend's CLI is missing or not signed in. For GPT, that's
+  `codex login status`; for Gemini, the user runs `agy` once interactively and
+  signs in (headless reuses those cached credentials). Tell the user exactly
+  which login to fix.
+- **exit 3** — the CLI ran but produced no image, or timed out. For GPT, check
+  that `codex features list` shows `image_generation` enabled. A headless `agy`
+  run that hits a tool needing approval still exits 0, so the scripts judge
+  success by a real file, never by the exit code. Re-run once; if it persists,
+  report the stderr the script printed.
 
 Don't silently fall back to the *other* backend or to a billed image API — the
 user chose a backend (or you asked them to), and switching it without saying so

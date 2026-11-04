@@ -1,10 +1,10 @@
 ## What it does
 
-`image-gen-router` generates an image from a text prompt using one of two local,
-headless backends: GPT through the Codex CLI, or Gemini through the Antigravity
-`agy` CLI. Both run under an account you are already logged into, so there is no
-API key and no per-image billing — the same as typing the prompt into that tool
-yourself.
+Claude can draw in code, but it cannot generate a picture. `image-gen-router` has it drive the official CLIs of the
+accounts you already pay for: the OpenAI **Codex CLI** (`codex exec` with its
+built-in `$imagegen`, under your ChatGPT login) or the Google **Antigravity CLI**
+(`agy -p` headless, under your Google login). There is no API key and no
+per-image bill — the same as typing the prompt into that tool yourself.
 
 The model choice is the whole point of the skill. If you name a backend it uses
 it; if you do not, it asks which one *before* generating rather than picking for
@@ -32,8 +32,8 @@ one you will actually call.
 
 | Backend | Needs |
 | --- | --- |
-| GPT | [`codex` CLI](https://github.com/openai/codex) on PATH, logged in (`codex login status`), with an imagegen-capable default model in `~/.codex/config.toml` |
-| Gemini | [Antigravity `agy` CLI](https://antigravity.google/) on PATH and logged in (`agy --version`) |
+| GPT | [Codex CLI](https://github.com/openai/codex) on PATH, signed in with ChatGPT (`codex login status`), `image_generation` enabled (`codex features list`) |
+| Gemini | [Antigravity CLI `agy`](https://antigravity.google/) on PATH, signed in once through an interactive `agy` session (headless reuses it) |
 
 ## The routing decision
 
@@ -57,14 +57,23 @@ make an aesthetic decision on your behalf. Naming a backend in your prompt skips
 the question entirely.
 
 **Does this use my API credits?**
-No. Both paths run under an existing login — the Codex CLI under your ChatGPT
-account, `agy` under your Google account. No API key is read and no per-image
-charge is incurred.
+No API key is read and no per-image charge is incurred. Each image does use your
+plan: Codex counts it toward your Codex usage limits (OpenAI says image turns
+use them 3–5x faster than plain turns), and `agy` uses your Antigravity quota
+(AI credits only if you turned that on).
+
+**Does it follow the CLIs' own docs?**
+Yes. Codex runs `codex exec` in its default read-only sandbox with `$imagegen`,
+and the script copies the image from `$CODEX_HOME/generated_images/<thread_id>/`.
+`agy` runs in headless print mode with `--output-format json`, without
+`--dangerously-skip-permissions`, and the script copies the image from
+`~/.gemini/antigravity-cli/brain/<conversation_id>/`.
 
 **Where does the file end up?**
-Pass `--out` for a specific path. Without it, the backend saves wherever it
-normally would and the script prints the absolute path on its last line as
-`IMAGE: <path>`.
+Pass `--out` for a specific path (`.png` or `.jpg`; `agy` writes JPEG, and on
+macOS `sips` converts it when you ask for PNG). Without it, the backend's own
+file stays where it saved it and the script prints the absolute path on its last
+line as `IMAGE: <path>`.
 
 ## It's working if
 

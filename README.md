@@ -47,16 +47,24 @@ plot.
 
 → **[`video-understand`](./skills/video-understand/SKILL.md)** · [docs](./docs/video-understand.md)
 
-### #2: Pictures shouldn't cost money you already pay
+### #2: Claude can't generate images. Your ChatGPT and Google accounts can.
 
-**The problem.** Generating an image usually means an API key and a per-image
-charge — on top of the ChatGPT or Google subscription you are already paying
-for.
+**The problem.** Claude reads images and can draw in code (SVG, HTML), but it
+cannot generate a picture. The usual workaround is an image API: a new key and a
+per-image charge, on top of the ChatGPT or Google plan you already pay for.
 
-**The fix** is to drive the tools you are already logged into. `image-gen-router`
-runs GPT through the Codex CLI and Gemini through the Antigravity CLI. No API
-key, no per-image billing — the same as typing the prompt into those tools
-yourself.
+**The fix** is to drive the official CLIs you are already signed into.
+`image-gen-router` runs the OpenAI **Codex CLI** (`codex exec` with its built-in
+`$imagegen`, `gpt-image-2`) under your ChatGPT login, and the Google
+**Antigravity CLI** (`agy -p`, headless) under your Google login. No API key, no
+per-image bill: it uses your plan's own usage, the same as typing the prompt
+into those tools yourself. Both run exactly as their docs describe: read-only
+sandbox for Codex, no permission bypass for `agy`.
+
+| Backend | Runs | Measured (2026-11-04, one square image) |
+| --- | --- | --- |
+| GPT | `codex exec "$imagegen …"` (Codex CLI 0.166) | 27–35 s |
+| Gemini | `agy -p "…"` (Antigravity CLI 1.5.0) | 50–60 s |
 
 Its defining behaviour is the choice: name a backend and it uses it; stay silent
 and it asks which one *before* generating, rather than picking for you.
@@ -70,7 +78,7 @@ and it asks which one *before* generating, rather than picking for you.
 | Skill | What it does |
 | --- | --- |
 | **[video-understand](./skills/video-understand/SKILL.md)** | Watch and understand any video, from a clip to a full film, with or without speech — every shot indexed and seen once, in timestamped grids, plus a transcript. Also culls piles of clips and screens them for burned-in text. |
-| **[image-gen-router](./skills/image-gen-router/SKILL.md)** | Generate an image via GPT (Codex) or Gemini (Antigravity), API-key-free. |
+| **[image-gen-router](./skills/image-gen-router/SKILL.md)** | Generate an image with the Codex CLI (ChatGPT login) or the Antigravity CLI (Google login), API-key-free. |
 
 ---
 
@@ -95,8 +103,8 @@ only) or offline `faster-whisper`, so the skill still works.
 
 | Backend | Needs |
 | --- | --- |
-| GPT | [`codex` CLI](https://github.com/openai/codex) on PATH, logged in, with an imagegen-capable default model in `~/.codex/config.toml` |
-| Gemini | [Antigravity `agy` CLI](https://antigravity.google/) on PATH and logged in |
+| GPT | [Codex CLI](https://github.com/openai/codex) on PATH, signed in with ChatGPT (`codex login status`), `image_generation` enabled (`codex features list`) |
+| Gemini | [Antigravity CLI `agy`](https://antigravity.google/) on PATH, signed in once through an interactive `agy` session |
 
 Python 3.9+, standard library only.
 
